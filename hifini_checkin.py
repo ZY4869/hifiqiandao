@@ -89,17 +89,35 @@ class HiFiNiCheckin:
     
     def _generate_encryption_key(self) -> bytes:
         """
-        生成加密密钥（基于账号信息）
+        生成加密密钥（基于账号信息 + Pepper）
+        使用双因素密钥派生：账号密码 + 环境变量中的固定密钥（Pepper）
+        即使账号密码泄露，没有Pepper也无法解密
         """
         if not AES_AVAILABLE:
             return b''
         
-        # 使用账号和固定盐生成密钥
-        salt = b'HiFiNi_Auto_Checkin_Salt_2025'
-        password = f"{self.username or 'default'}_{self.password or 'default'}".encode('utf-8')
+        # 从环境变量读取固定密钥（Pepper）
+        pepper = os.environ.get("HIFINI_ENCRYPTION_KEY", "")
         
-        # 使用PBKDF2生成256位密钥
-        key = PBKDF2(password, salt, dkLen=32, count=100000)
+        # 如果没有设置固定密钥，生成一个随机的（首次运行）
+        if not pepper:
+            # 生成32字节随机密钥，Base64编码
+            import secrets
+            pepper = secrets.token_urlsafe(32)
+            print(f"⚠️  未设置 HIFINI_ENCRYPTION_KEY，使用临时密钥")
+            print(f"💡 建议设置固定密钥以确保安全性：")
+            print(f"   HIFINI_ENCRYPTION_KEY=\"{pepper}\"")
+            print(f"   请将此密钥添加到 GitHub Secrets 中！")
+        
+        # 使用账号和固定盐生成基础密钥材料
+        salt = b'HiFiNi_Auto_Checkin_Salt_2025'
+        
+        # 双因素密钥材料：账号密码 + Pepper
+        password_material = f"{self.username or 'default'}_{self.password or 'default'}_{pepper}".encode('utf-8')
+        
+        # 使用PBKDF2生成256位密钥（10万次迭代，抗暴力破解）
+        key = PBKDF2(password_material, salt, dkLen=32, count=100000)
+        
         return key
     
     def _encrypt_cookie(self, cookie_dict: dict) -> str:
