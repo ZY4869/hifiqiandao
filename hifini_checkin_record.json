@@ -1,0 +1,18 @@
+{
+  "total": 0,
+  "years": {
+    "2025": {
+      "total": 0,
+      "months": {
+        "2025-10": {
+          "total": 0,
+          "days": [],
+          "points": 0,
+          "days_in_month": 31
+        }
+      },
+      "points": 0
+    }
+  },
+  "total_points": 0
+}
