@@ -74,6 +74,9 @@ class HiFiNiCheckin:
         self.login_method = "未知"
         self.points_gained = ""
         self.last_checkin_result = ""
+        self.current_total_coins = ""  # 当前总金币数
+        self.checkin_method = "Cookie签到"  # 签到方式
+        self.checkin_duration = 0.0  # 签到耗时（秒）
         
         # 文件路径
         if getattr(sys, 'frozen', False):
@@ -483,6 +486,9 @@ class HiFiNiCheckin:
         :param retry_on_failure: 失败时是否重新登录重试
         :return: 签到结果
         """
+        # 记录开始时间
+        start_time = time.time()
+        
         try:
             # 第一次尝试签到
             print("🚀 开始签到...")
@@ -499,6 +505,7 @@ class HiFiNiCheckin:
             # 检查是否因为 Cookie 失效需要重新登录
             if ("请登录" in content or "user-login" in content or "登录" in content) and retry_on_failure:
                 print("⚠️  Cookie 可能已失效，尝试重新登录...")
+                self.checkin_method = "Cookie失效，重新登录后签到"
                 
                 if self.username and self.password:
                     login_result = self.login()
@@ -527,28 +534,56 @@ class HiFiNiCheckin:
                 )
                 content = response.text
             
+            # 尝试获取当前总金币数（从页面中解析）
+            # 可能的模式：金币：123、金币数：123、当前金币：123等
+            coins_patterns = [
+                r'金币[：:]\s*(\d+)',
+                r'金币数[：:]\s*(\d+)',
+                r'当前金币[：:]\s*(\d+)',
+                r'我的金币[：:]\s*(\d+)',
+                r'"coins"\s*:\s*(\d+)',
+                r'"credit"\s*:\s*(\d+)',
+                r'积分[：:]\s*(\d+)',
+            ]
+            for pattern in coins_patterns:
+                coins_match = re.search(pattern, content)
+                if coins_match:
+                    self.current_total_coins = coins_match.group(1)
+                    print(f"💰 当前总金币: {self.current_total_coins}")
+                    break
+            
             # 解析签到结果
             message_match = re.search(r'"message"\s*:\s*"([^"]+)"', content)
             if message_match:
                 message = message_match.group(1)
                 self.last_checkin_result = message
                 
-                # 尝试从消息中提取积分信息
+                # 尝试从消息中提取本次获得的金币信息
                 points_match = re.search(r'(\d+)\s*(?:金币|积分|点)', message)
                 if points_match:
                     self.points_gained = points_match.group(1)
+                    print(f"💎 本次获得: +{self.points_gained} 金币")
                 
-                print(f"✨ 签到成功: {message}")
+                print(f"✨ {message}")
+                
+                # 计算签到耗时
+                self.checkin_duration = time.time() - start_time
+                print(f"⏱️  签到耗时: {self.checkin_duration:.2f} 秒")
                 
                 # 保存签到记录
-                self._save_checkin_record(status="success" if "成功" in message else "already")
+                is_new_checkin = "成功" in message or "获得" in message or "领取" in message
+                self._save_checkin_record(status="success" if is_new_checkin else "already")
                 
                 return {"success": True, "message": message}
             else:
+                # 计算签到耗时
+                self.checkin_duration = time.time() - start_time
                 print(f"⚠️  签到响应: {content[:200]}")
                 return {"success": True, "message": "签到完成（未解析到具体信息）"}
                 
         except Exception as e:
+            # 计算签到耗时
+            self.checkin_duration = time.time() - start_time
             error_msg = f"签到过程发生错误: {str(e)}"
             print(f"❌ {error_msg}")
             return {"success": False, "message": error_msg}
@@ -673,7 +708,7 @@ class HiFiNiCheckin:
             else:
                 record = {"total": 0, "years": {}, "total_points": 0}
             
-            # 确保总积分字段存在
+            # 确保总金币字段存在
             if "total_points" not in record:
                 record["total_points"] = 0
             
@@ -685,9 +720,15 @@ class HiFiNiCheckin:
             
             # 确保月份存在
             if month not in record["years"][year]["months"]:
-                record["years"][year]["months"][month] = {"total": 0, "days": [], "points": 0}
+                record["years"][year]["months"][month] = {"total": 0, "days": [], "points": 0, "duration": 0, "daily_duration": {}}
             elif "points" not in record["years"][year]["months"][month]:
                 record["years"][year]["months"][month]["points"] = 0
+            
+            # 确保耗时字段存在
+            if "duration" not in record["years"][year]["months"][month]:
+                record["years"][year]["months"][month]["duration"] = 0
+            if "daily_duration" not in record["years"][year]["months"][month]:
+                record["years"][year]["months"][month]["daily_duration"] = {}
             
             # 检查今天是否已经签到
             days = record["years"][year]["months"][month]["days"]
@@ -697,7 +738,7 @@ class HiFiNiCheckin:
             days_in_month = (current_date.replace(month=current_date.month % 12 + 1, day=1) - timedelta(days=1)).day
             record["years"][year]["months"][month]["days_in_month"] = days_in_month
             
-            # 新签到情况下处理积分和天数
+            # 新签到情况下处理金币和天数
             if today not in days and status == "success":
                 # 今天首次签到，更新计数
                 days.append(today)
@@ -705,19 +746,32 @@ class HiFiNiCheckin:
                 record["years"][year]["total"] += 1
                 record["years"][year]["months"][month]["total"] += 1
                 
-                # 保存积分信息
+                # 保存金币信息
                 if self.points_gained:
                     try:
                         points = int(self.points_gained)
-                        # 添加到本月积分
+                        # 添加到本月金币
                         record["years"][year]["months"][month]["points"] += points
-                        # 添加到年度积分
+                        # 添加到年度金币
                         record["years"][year]["points"] += points
-                        # 添加到总积分
+                        # 添加到总金币
                         record["total_points"] += points
-                        print(f"💰 记录本次签到积分: {points}点")
+                        print(f"💰 记录本次签到金币: +{points} 金币")
                     except Exception as e:
-                        print(f"⚠️  保存积分信息失败: {str(e)}")
+                        print(f"⚠️  保存金币信息失败: {str(e)}")
+                
+                # 保存耗时信息
+                if self.checkin_duration > 0:
+                    try:
+                        # 保存当日耗时
+                        record["years"][year]["months"][month]["daily_duration"][today] = round(self.checkin_duration, 2)
+                        # 累加月度总耗时
+                        record["years"][year]["months"][month]["duration"] = round(
+                            record["years"][year]["months"][month]["duration"] + self.checkin_duration, 2
+                        )
+                        print(f"⏱️  记录本次耗时: {self.checkin_duration:.2f} 秒")
+                    except Exception as e:
+                        print(f"⚠️  保存耗时信息失败: {str(e)}")
                 
                 # 保存记录
                 record["years"][year]["months"][month]["days"] = days
@@ -753,13 +807,16 @@ class HiFiNiCheckin:
                         month_days = len(month_data.get("days", []))
                         days_in_month = month_data.get("days_in_month", 30)
                         
-                        # 获取积分信息
+                        # 获取金币信息
                         month_points = month_data.get("points", 0)
                         year_points = record.get("years", {}).get(current_year, {}).get("points", 0)
                         total_points = record.get("total_points", 0)
                         
                         # 判断今日是否首次签到
                         is_first_today = today in month_data.get("days", [])
+                        
+                        # 获取耗时信息
+                        month_duration = month_data.get("duration", 0)
                         
                         return {
                             "total_days": total_days,
@@ -768,7 +825,8 @@ class HiFiNiCheckin:
                             "month_points": month_points,
                             "year_points": year_points,
                             "total_points": total_points,
-                            "is_first_today": is_first_today
+                            "is_first_today": is_first_today,
+                            "month_duration": month_duration
                         }
                     except json.JSONDecodeError:
                         pass
@@ -780,7 +838,8 @@ class HiFiNiCheckin:
                 "month_points": 0,
                 "year_points": 0,
                 "total_points": 0,
-                "is_first_today": False
+                "is_first_today": False,
+                "month_duration": 0
             }
         except Exception as e:
             print(f"❌ 获取签到统计信息失败: {str(e)}")
@@ -791,7 +850,8 @@ class HiFiNiCheckin:
                 "month_points": 0,
                 "year_points": 0,
                 "total_points": 0,
-                "is_first_today": False
+                "is_first_today": False,
+                "month_duration": 0
             }
     
     def send_telegram_notification(self, tg_bot_token: str, tg_chat_id: str, message: str):
@@ -817,6 +877,7 @@ class HiFiNiCheckin:
             year_points = stats["year_points"]
             total_points = stats["total_points"]
             is_first_today = stats["is_first_today"]
+            month_duration = stats.get("month_duration", 0)
             
             # 构建签到统计信息
             year_name = now.strftime("%Y年")
@@ -884,10 +945,25 @@ class HiFiNiCheckin:
                 icon = "❓"
                 header_icon = "❓"
             
-            # 获取积分信息
+            # 获取金币信息
             points_text = ""
             if self.points_gained:
-                points_text = f"💰 积分: +{self.points_gained}\n"
+                points_text = f"💎 本次获得: +{self.points_gained} 金币\n"
+            
+            # 获取当前总金币信息
+            current_coins_text = ""
+            if self.current_total_coins:
+                current_coins_text = f"💰 当前总金币: {self.current_total_coins} 金币\n"
+            
+            # 构建签到方式显示
+            checkin_method_icon = ""
+            checkin_method_name = self.checkin_method
+            if "Cookie" in self.checkin_method and "失效" not in self.checkin_method:
+                checkin_method_icon = "🍪"
+            elif "失效" in self.checkin_method or "重新登录" in self.checkin_method:
+                checkin_method_icon = "🔄"
+            else:
+                checkin_method_icon = "✅"
             
             # 构建美化的消息
             formatted_message = f"""{header_icon} *HiFiNi音乐磁场每日签到* {header_icon}
@@ -897,13 +973,19 @@ class HiFiNiCheckin:
 👤 账号: {self.username or '使用Cookie'}
 {icon} 状态: {status}
 {login_method_text}
-{points_text}📈 积分统计:
-  · {month_name}积分: {month_points} 金币
-  · {year_name}积分: {year_points} 金币
-  · 历史总积分: {total_points} 金币
+{checkin_method_icon} 签到方式: {checkin_method_name}
+{points_text}{current_coins_text}
+📈 金币统计:
+  · {month_name}金币: {month_points} 金币
+  · {year_name}金币: {year_points} 金币
+  · 历史总金币: {total_points} 金币
 
 📊 签到统计:
 {stats_text}
+
+⏱️  签到耗时:
+  · 本次耗时: {self.checkin_duration:.2f} 秒
+  · {month_name}总耗时: {month_duration:.2f} 秒
 
 🚀 {motto}
 
@@ -940,6 +1022,21 @@ def main():
     print("HiFiNi 自动签到脚本")
     print("=" * 50)
     
+    # 检查是否自动运行（定时任务）
+    is_auto_run = os.environ.get("IS_AUTO_RUN", "false").lower() in ["true", "1", "yes"]
+    
+    # 如果是自动运行，添加随机延迟（1-180秒）
+    if is_auto_run:
+        delay_seconds = random.randint(1, 180)
+        print(f"🕒 自动运行模式，随机延迟 {delay_seconds} 秒后开始签到...")
+        print(f"⏰ 预计开始时间: {(datetime.now() + timedelta(seconds=delay_seconds)).strftime('%Y-%m-%d %H:%M:%S')}")
+        time.sleep(delay_seconds)
+        print(f"✅ 延迟结束，开始执行签到")
+        print("-" * 50)
+    else:
+        print("🖐️  手动运行模式，立即开始签到")
+        print("-" * 50)
+    
     # 从环境变量获取配置（支持账号密码或Cookie）
     username = os.environ.get("HIFINI_USERNAME")
     password = os.environ.get("HIFINI_PASSWORD")
@@ -967,18 +1064,18 @@ def main():
     
     # 创建签到实例
     if username and password:
-        print(f"📝 配置账号密码登录")
-        print(f"👤 账号: {username}")
+        print(f"📝 账号配置: {username}")
         checkin = HiFiNiCheckin(username=username, password=password)
         
-        # 智能Cookie策略：先尝试加载加密的Cookie
+        # 🎯 优先Cookie策略：先尝试使用已保存的加密Cookie签到
+        cookie_loaded = False
         if AES_AVAILABLE:
             print("\n🔍 检查是否存在加密Cookie...")
             encrypted_cookie_dict = checkin._load_encrypted_cookie()
             
             if encrypted_cookie_dict:
-                # 找到了加密Cookie，尝试使用
-                print("✅ 找到加密Cookie，尝试使用...")
+                # 找到了加密Cookie，先尝试用它签到
+                print("✅ 找到加密Cookie，优先使用Cookie签到")
                 cookie_str = "; ".join([f"{key}={value}" for key, value in encrypted_cookie_dict.items()])
                 checkin.cookie = cookie_str
                 
@@ -988,32 +1085,16 @@ def main():
                 
                 checkin.login_method = "加密Cookie"
                 print(f"📦 已加载加密Cookie (长度: {len(cookie_str)})")
+                cookie_loaded = True
             else:
-                # 没有加密Cookie，需要登录
-                print("⚠️  未找到有效的加密Cookie，开始登录...")
-                login_result = checkin.login()
-                
-                if not login_result["success"]:
-                    print(f"⚠️  常规登录失败: {login_result['message']}")
-                    
-                    # 如果 requests 登录失败，尝试使用 Selenium
-                    if SELENIUM_AVAILABLE:
-                        print("🔄 尝试使用浏览器模拟登录...")
-                        selenium_result = checkin.login_with_selenium()
-                        
-                        if not selenium_result["success"]:
-                            print(f"❌ 浏览器登录也失败: {selenium_result['message']}")
-                            sys.exit(1)
-                    else:
-                        print("💡 提示: 安装 selenium 可以使用浏览器模拟登录作为备选方案")
-                        print("   运行: pip install selenium")
-                        sys.exit(1)
+                print("📝 未找到加密Cookie，需要先登录获取Cookie")
         else:
-            # AES不可用，直接登录
             print("⚠️  pycryptodome未安装，无法使用加密Cookie功能")
             print("💡 提示: 运行 pip install pycryptodome 启用Cookie加密")
+        
+        # 如果没有加载到Cookie，先执行一次登录
+        if not cookie_loaded:
             print("🔐 开始账号密码登录...")
-            
             login_result = checkin.login()
             
             if not login_result["success"]:
@@ -1031,8 +1112,11 @@ def main():
                     print("💡 提示: 安装 selenium 可以使用浏览器模拟登录作为备选方案")
                     print("   运行: pip install selenium")
                     sys.exit(1)
+            
+            time.sleep(1)  # 等待1秒
         
-        time.sleep(1)  # 等待1秒
+        # 注意：如果Cookie加载成功，直接进入签到流程
+        # checkin()方法内部会处理Cookie失效的情况（自动重新登录）
     elif cookie:
         print(f"📝 使用 Cookie 登录")
         print(f"🍪 Cookie 长度: {len(cookie)}")
