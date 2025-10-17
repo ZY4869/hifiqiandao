@@ -8,7 +8,9 @@
           "total": 0,
           "days": [],
           "points": 0,
-          "days_in_month": 31
+          "days_in_month": 31,
+          "duration": 0,
+          "daily_duration": {}
         }
       },
       "points": 0
