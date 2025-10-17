@@ -76,7 +76,7 @@ class HiFiNiCheckin:
         self.last_checkin_result = ""
         self.current_total_coins = ""  # 当前总金币数
         self.checkin_method = "Cookie签到"  # 签到方式
-        self.checkin_duration = 0.0  # 签到耗时（秒）
+        self.total_duration = 0.0  # 总运行耗时（秒）
         
         # 文件路径
         if getattr(sys, 'frozen', False):
@@ -92,7 +92,7 @@ class HiFiNiCheckin:
     
     def _generate_encryption_key(self) -> bytes:
         """
-        生成加密密钥（基于账号信息 + Pepper）
+        生成加密密钥（基于账号信息 + 固定密钥Pepper）
         使用双因素密钥派生：账号密码 + 环境变量中的固定密钥（Pepper）
         即使账号密码泄露，没有Pepper也无法解密
         """
@@ -102,21 +102,21 @@ class HiFiNiCheckin:
         # 从环境变量读取固定密钥（Pepper）
         pepper = os.environ.get("HIFINI_ENCRYPTION_KEY", "")
         
-        # 如果没有设置固定密钥，生成一个随机的（首次运行）
         if not pepper:
-            # 生成32字节随机密钥，Base64编码
-            import secrets
-            pepper = secrets.token_urlsafe(32)
-            print(f"⚠️  未设置 HIFINI_ENCRYPTION_KEY，使用临时密钥")
-            print(f"💡 建议设置固定密钥以确保安全性：")
-            print(f"   HIFINI_ENCRYPTION_KEY=\"{pepper}\"")
-            print(f"   请将此密钥添加到 GitHub Secrets 中！")
+            print("⚠️  未设置 HIFINI_ENCRYPTION_KEY，使用默认加密方式")
+            print("💡 强烈建议设置固定密钥以增强安全性！")
+            print("   请在 GitHub Secrets 中添加 HIFINI_ENCRYPTION_KEY")
+            print("   可以使用任意32位以上的随机字符串")
         
         # 使用账号和固定盐生成基础密钥材料
         salt = b'HiFiNi_Auto_Checkin_Salt_2025'
         
-        # 双因素密钥材料：账号密码 + Pepper
-        password_material = f"{self.username or 'default'}_{self.password or 'default'}_{pepper}".encode('utf-8')
+        # 双因素密钥材料：账号密码 + Pepper（如果有）
+        if pepper:
+            password_material = f"{self.username or 'default'}_{self.password or 'default'}_{pepper}".encode('utf-8')
+        else:
+            # 未设置Pepper时，只使用账号密码
+            password_material = f"{self.username or 'default'}_{self.password or 'default'}".encode('utf-8')
         
         # 使用PBKDF2生成256位密钥（10万次迭代，抗暴力破解）
         key = PBKDF2(password_material, salt, dkLen=32, count=100000)
@@ -486,9 +486,6 @@ class HiFiNiCheckin:
         :param retry_on_failure: 失败时是否重新登录重试
         :return: 签到结果
         """
-        # 记录开始时间
-        start_time = time.time()
-        
         try:
             # 第一次尝试签到
             print("🚀 开始签到...")
@@ -566,24 +563,16 @@ class HiFiNiCheckin:
                 
                 print(f"✨ {message}")
                 
-                # 计算签到耗时
-                self.checkin_duration = time.time() - start_time
-                print(f"⏱️  签到耗时: {self.checkin_duration:.2f} 秒")
-                
-                # 保存签到记录
+                # 保存签到记录（耗时稍后在main中统一记录）
                 is_new_checkin = "成功" in message or "获得" in message or "领取" in message
                 self._save_checkin_record(status="success" if is_new_checkin else "already")
                 
                 return {"success": True, "message": message}
             else:
-                # 计算签到耗时
-                self.checkin_duration = time.time() - start_time
                 print(f"⚠️  签到响应: {content[:200]}")
                 return {"success": True, "message": "签到完成（未解析到具体信息）"}
                 
         except Exception as e:
-            # 计算签到耗时
-            self.checkin_duration = time.time() - start_time
             error_msg = f"签到过程发生错误: {str(e)}"
             print(f"❌ {error_msg}")
             return {"success": False, "message": error_msg}
@@ -760,16 +749,16 @@ class HiFiNiCheckin:
                     except Exception as e:
                         print(f"⚠️  保存金币信息失败: {str(e)}")
                 
-                # 保存耗时信息
-                if self.checkin_duration > 0:
+                # 保存耗时信息（total_duration在main中设置）
+                if self.total_duration > 0:
                     try:
                         # 保存当日耗时
-                        record["years"][year]["months"][month]["daily_duration"][today] = round(self.checkin_duration, 2)
+                        record["years"][year]["months"][month]["daily_duration"][today] = round(self.total_duration, 2)
                         # 累加月度总耗时
                         record["years"][year]["months"][month]["duration"] = round(
-                            record["years"][year]["months"][month]["duration"] + self.checkin_duration, 2
+                            record["years"][year]["months"][month]["duration"] + self.total_duration, 2
                         )
-                        print(f"⏱️  记录本次耗时: {self.checkin_duration:.2f} 秒")
+                        print(f"⏱️  记录本次运行耗时: {self.total_duration:.2f} 秒")
                     except Exception as e:
                         print(f"⚠️  保存耗时信息失败: {str(e)}")
                 
@@ -983,8 +972,8 @@ class HiFiNiCheckin:
 📊 签到统计:
 {stats_text}
 
-⏱️  签到耗时:
-  · 本次耗时: {self.checkin_duration:.2f} 秒
+⏱️  运行耗时:
+  · 本次耗时: {self.total_duration:.2f} 秒
   · {month_name}总耗时: {month_duration:.2f} 秒
 
 🚀 {motto}
@@ -1018,6 +1007,9 @@ def main():
     """
     主函数
     """
+    # 记录开始时间（用于计算总运行耗时）
+    start_time = time.time()
+    
     print("=" * 50)
     print("HiFiNi 自动签到脚本")
     print("=" * 50)
@@ -1129,11 +1121,20 @@ def main():
     # 执行签到
     result = checkin.checkin()
     
+    # 计算总运行耗时
+    checkin.total_duration = time.time() - start_time
+    
+    # 重新保存记录（包含耗时信息）
+    if result['success']:
+        is_new_checkin = "成功" in result['message'] or "获得" in result['message'] or "领取" in result['message']
+        checkin._save_checkin_record(status="success" if is_new_checkin else "already")
+    
     # 输出结果
     print("\n" + "=" * 50)
     print("签到结果:")
     print(f"状态: {'✅ 成功' if result['success'] else '❌ 失败'}")
     print(f"信息: {result['message']}")
+    print(f"⏱️  总运行耗时: {checkin.total_duration:.2f} 秒")
     print("=" * 50)
     
     # 发送Telegram通知
