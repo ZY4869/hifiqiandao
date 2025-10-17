@@ -76,7 +76,6 @@ class HiFiNiCheckin:
         self.last_checkin_result = ""
         self.current_total_coins = ""  # 当前总金币数
         self.checkin_method = "Cookie签到"  # 签到方式
-        self.total_duration = 0.0  # 总运行耗时（秒）
         
         # 文件路径
         if getattr(sys, 'frozen', False):
@@ -709,15 +708,9 @@ class HiFiNiCheckin:
             
             # 确保月份存在
             if month not in record["years"][year]["months"]:
-                record["years"][year]["months"][month] = {"total": 0, "days": [], "points": 0, "duration": 0, "daily_duration": {}}
+                record["years"][year]["months"][month] = {"total": 0, "days": [], "points": 0}
             elif "points" not in record["years"][year]["months"][month]:
                 record["years"][year]["months"][month]["points"] = 0
-            
-            # 确保耗时字段存在
-            if "duration" not in record["years"][year]["months"][month]:
-                record["years"][year]["months"][month]["duration"] = 0
-            if "daily_duration" not in record["years"][year]["months"][month]:
-                record["years"][year]["months"][month]["daily_duration"] = {}
             
             # 检查今天是否已经签到
             days = record["years"][year]["months"][month]["days"]
@@ -748,19 +741,6 @@ class HiFiNiCheckin:
                         print(f"💰 记录本次签到金币: +{points} 金币")
                     except Exception as e:
                         print(f"⚠️  保存金币信息失败: {str(e)}")
-                
-                # 保存耗时信息（total_duration在main中设置）
-                if self.total_duration > 0:
-                    try:
-                        # 保存当日耗时
-                        record["years"][year]["months"][month]["daily_duration"][today] = round(self.total_duration, 2)
-                        # 累加月度总耗时
-                        record["years"][year]["months"][month]["duration"] = round(
-                            record["years"][year]["months"][month]["duration"] + self.total_duration, 2
-                        )
-                        print(f"⏱️  记录本次运行耗时: {self.total_duration:.2f} 秒")
-                    except Exception as e:
-                        print(f"⚠️  保存耗时信息失败: {str(e)}")
                 
                 # 保存记录
                 record["years"][year]["months"][month]["days"] = days
@@ -804,9 +784,6 @@ class HiFiNiCheckin:
                         # 判断今日是否首次签到
                         is_first_today = today in month_data.get("days", [])
                         
-                        # 获取耗时信息
-                        month_duration = month_data.get("duration", 0)
-                        
                         return {
                             "total_days": total_days,
                             "month_days": month_days,
@@ -814,8 +791,7 @@ class HiFiNiCheckin:
                             "month_points": month_points,
                             "year_points": year_points,
                             "total_points": total_points,
-                            "is_first_today": is_first_today,
-                            "month_duration": month_duration
+                            "is_first_today": is_first_today
                         }
                     except json.JSONDecodeError:
                         pass
@@ -827,8 +803,7 @@ class HiFiNiCheckin:
                 "month_points": 0,
                 "year_points": 0,
                 "total_points": 0,
-                "is_first_today": False,
-                "month_duration": 0
+                "is_first_today": False
             }
         except Exception as e:
             print(f"❌ 获取签到统计信息失败: {str(e)}")
@@ -839,8 +814,7 @@ class HiFiNiCheckin:
                 "month_points": 0,
                 "year_points": 0,
                 "total_points": 0,
-                "is_first_today": False,
-                "month_duration": 0
+                "is_first_today": False
             }
     
     def send_telegram_notification(self, tg_bot_token: str, tg_chat_id: str, message: str):
@@ -866,7 +840,6 @@ class HiFiNiCheckin:
             year_points = stats["year_points"]
             total_points = stats["total_points"]
             is_first_today = stats["is_first_today"]
-            month_duration = stats.get("month_duration", 0)
             
             # 构建签到统计信息
             year_name = now.strftime("%Y年")
@@ -972,10 +945,6 @@ class HiFiNiCheckin:
 📊 签到统计:
 {stats_text}
 
-⏱️  运行耗时:
-  · 本次耗时: {self.total_duration:.2f} 秒
-  · {month_name}总耗时: {month_duration:.2f} 秒
-
 🚀 {motto}
 
 📝 每日一言: {quote}"""
@@ -1007,9 +976,6 @@ def main():
     """
     主函数
     """
-    # 记录开始时间（用于计算总运行耗时）
-    start_time = time.time()
-    
     print("=" * 50)
     print("HiFiNi 自动签到脚本")
     print("=" * 50)
@@ -1121,20 +1087,11 @@ def main():
     # 执行签到
     result = checkin.checkin()
     
-    # 计算总运行耗时
-    checkin.total_duration = time.time() - start_time
-    
-    # 重新保存记录（包含耗时信息）
-    if result['success']:
-        is_new_checkin = "成功" in result['message'] or "获得" in result['message'] or "领取" in result['message']
-        checkin._save_checkin_record(status="success" if is_new_checkin else "already")
-    
     # 输出结果
     print("\n" + "=" * 50)
     print("签到结果:")
     print(f"状态: {'✅ 成功' if result['success'] else '❌ 失败'}")
     print(f"信息: {result['message']}")
-    print(f"⏱️  总运行耗时: {checkin.total_duration:.2f} 秒")
     print("=" * 50)
     
     # 发送Telegram通知
