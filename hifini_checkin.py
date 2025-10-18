@@ -15,7 +15,7 @@ import sys
 import time
 import random
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # AES加密相关
 try:
@@ -38,6 +38,11 @@ except ImportError:
 
 # 每日一言API
 DAILY_QUOTES_API = "https://v1.hitokoto.cn/?encode=json&c=k"
+
+
+def get_beijing_time():
+    """获取北京时间（UTC+8）"""
+    return datetime.now(timezone(timedelta(hours=8)))
 
 
 class HiFiNiCheckin:
@@ -682,9 +687,10 @@ class HiFiNiCheckin:
     def _save_checkin_record(self, status="success"):
         """保存签到记录"""
         try:
-            today = datetime.now().strftime('%Y-%m-%d')
-            month = datetime.now().strftime('%Y-%m')
-            year = datetime.now().strftime('%Y')
+            beijing_time = get_beijing_time()
+            today = beijing_time.strftime('%Y-%m-%d')
+            month = beijing_time.strftime('%Y-%m')
+            year = beijing_time.strftime('%Y')
             
             # 加载现有记录
             if os.path.exists(self.checkin_record_file):
@@ -716,7 +722,7 @@ class HiFiNiCheckin:
             days = record["years"][year]["months"][month]["days"]
             
             # 计算本月总天数
-            current_date = datetime.now()
+            current_date = beijing_time
             days_in_month = (current_date.replace(month=current_date.month % 12 + 1, day=1) - timedelta(days=1)).day
             record["years"][year]["months"][month]["days_in_month"] = days_in_month
             
@@ -763,10 +769,11 @@ class HiFiNiCheckin:
                     try:
                         record = json.load(f)
                         
-                        # 获取当前年月
-                        current_year = datetime.now().strftime('%Y')
-                        current_month = datetime.now().strftime('%Y-%m')
-                        today = datetime.now().strftime('%Y-%m-%d')
+                        # 获取当前年月（使用北京时间）
+                        beijing_time = get_beijing_time()
+                        current_year = beijing_time.strftime('%Y')
+                        current_month = beijing_time.strftime('%Y-%m')
+                        today = beijing_time.strftime('%Y-%m-%d')
                         
                         # 获取总签到天数
                         total_days = record.get("total", 0)
@@ -824,8 +831,8 @@ class HiFiNiCheckin:
             return
         
         try:
-            # 获取当前日期和时间
-            now = datetime.now()
+            # 获取当前日期和时间（北京时间）
+            now = get_beijing_time()
             date_str = now.strftime("%Y年%m月%d日")
             weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
             weekday = weekdays[now.weekday()]
@@ -890,8 +897,10 @@ class HiFiNiCheckin:
             
             # 获取签到状态
             status = "未知"
-            if "签到成功" in message or "签到成功" in self.last_checkin_result:
-                status = "签到成功"
+            # 检查签到成功的各种情况（"签到成功"或"成功签到"）
+            if ("签到成功" in message or "成功签到" in message or 
+                "签到成功" in self.last_checkin_result or "成功签到" in self.last_checkin_result):
+                status = self.last_checkin_result if self.last_checkin_result else message
                 icon = "✅"
                 header_icon = "✨"
             elif "已经签过" in message or "已签到" in message:
@@ -987,7 +996,8 @@ def main():
     if is_auto_run:
         delay_seconds = random.randint(1, 180)
         print(f"🕒 自动运行模式，随机延迟 {delay_seconds} 秒后开始签到...")
-        print(f"⏰ 预计开始时间: {(datetime.now() + timedelta(seconds=delay_seconds)).strftime('%Y-%m-%d %H:%M:%S')}")
+        beijing_time = get_beijing_time()
+        print(f"⏰ 预计开始时间: {(beijing_time + timedelta(seconds=delay_seconds)).strftime('%Y-%m-%d %H:%M:%S')}")
         time.sleep(delay_seconds)
         print(f"✅ 延迟结束，开始执行签到")
         print("-" * 50)
