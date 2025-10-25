@@ -1,11 +1,11 @@
 {
-  "total": 7,
+  "total": 8,
   "years": {
     "2025": {
-      "total": 7,
+      "total": 8,
       "months": {
         "2025-10": {
-          "total": 7,
+          "total": 8,
           "days": [
             "2025-10-17",
             "2025-10-19",
@@ -13,16 +13,17 @@
             "2025-10-21",
             "2025-10-23",
             "2025-10-24",
-            "2025-10-25"
+            "2025-10-25",
+            "2025-10-26"
           ],
-          "points": 12,
+          "points": 14,
           "days_in_month": 31,
           "duration": 0,
           "daily_duration": {}
         }
       },
-      "points": 12
+      "points": 14
     }
   },
-  "total_points": 12
+  "total_points": 14
 }
